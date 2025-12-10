@@ -10,7 +10,7 @@
 | :--- |:------------------------------------------------|
 | **Course** | Software Engineering                            |
 | **Team Name** | LyjZxh                                          |
-| **Members** | Member A (Zhang Xiaohan), Member B (Lin Yujing) |
+| **Members** | Zhang Xiaohan, Lin Yujing |
 ---
 
 ##  Key Features
