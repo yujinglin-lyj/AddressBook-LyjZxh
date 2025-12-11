@@ -11,14 +11,33 @@ data = pd.DataFrame(columns=columns)
 @app.route('/')
 def index():
     global data
-    # 排序：收藏的在前面
-    df_sorted = data.sort_values(by="IsFavorite", ascending=False)
-    # 转为字典列表传给页面
+
+    # 1. 获取 URL 里的参数 (例如 ?filter=fav)
+    filter_type = request.args.get('filter')
+
+    # 2. 准备要显示的数据 (使用 copy 防止影响原始数据)
+    df_display = data.copy()
+
+    # 3. 如果用户点了 "Show Favorites Only"
+    if filter_type == 'fav':
+        # 筛选 IsFavorite 为 True 的行
+        df_display = df_display[df_display['IsFavorite'] == True]
+
+    # 4. 排序：收藏的依然排在前面（虽然如果是纯收藏列表，这步没啥大变化，但保持逻辑一致）
+    if not df_display.empty:
+        df_sorted = df_display.sort_values(by="IsFavorite", ascending=False)
+    else:
+        df_sorted = df_display
+
+    # 5. 转为字典列表传给页面
     contacts = df_sorted.to_dict(orient='records')
-    # 为了方便通过索引操作，我们需要保留原始索引
+
+    # 6. 把原始的索引 (Index) 放进去，确保删除/修改时 ID 是对的
     for i, contact in enumerate(contacts):
         contact['id'] = df_sorted.index[i]
-    return render_template('index.html', contacts=contacts)
+
+    # 传参给前端：contacts 数据，以及当前的 filter 状态（用于控制按钮显示）
+    return render_template('index.html', contacts=contacts, current_filter=filter_type)
 
 
 @app.route('/add', methods=['POST'])
@@ -34,8 +53,15 @@ def add_contact():
 @app.route('/toggle_fav/<int:idx>')
 def toggle_fav(idx):
     global data
+    # 切换状态
     data.at[idx, "IsFavorite"] = not data.at[idx, "IsFavorite"]
-    return redirect(url_for('index'))
+
+    # 核心修改：读取 URL 参数，决定跳回哪里
+    filter_type = request.args.get('filter')
+    if filter_type == 'fav':
+        return redirect(url_for('index', filter='fav'))
+    else:
+        return redirect(url_for('index'))
 
 
 @app.route('/delete/<int:idx>')
@@ -80,6 +106,4 @@ def import_excel():
 
 
 if __name__ == '__main__':
-
     app.run(debug=True, port=5000)
-
