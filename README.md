@@ -1,11 +1,11 @@
-# Address Book - LyjZxh
+# Extreme Programming: Address Book
 
 > A collaborative Software Engineering assignment implementing a feature-rich Contact Management System using Python Flask and Pandas.
 
 ## Course Information
 
 | Item | Details |
-| --- | :--- |
+| --- | --- |
 | **Course** | Software Engineering |
 | **Team Name** | LyjZxh |
 | **Members** | Zhang Xiaohan, Lin Yujing |
