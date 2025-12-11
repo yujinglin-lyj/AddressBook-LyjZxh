@@ -11,32 +11,20 @@ data = pd.DataFrame(columns=columns)
 @app.route('/')
 def index():
     global data
-
-    # 1. 获取 URL 里的参数 (例如 ?filter=fav)
     filter_type = request.args.get('filter')
-
-    # 2. 准备要显示的数据 (使用 copy 防止影响原始数据)
     df_display = data.copy()
 
-    # 3. 如果用户点了 "Show Favorites Only"
     if filter_type == 'fav':
-        # 筛选 IsFavorite 为 True 的行
         df_display = df_display[df_display['IsFavorite'] == True]
 
-    # 4. 排序：收藏的依然排在前面（虽然如果是纯收藏列表，这步没啥大变化，但保持逻辑一致）
     if not df_display.empty:
         df_sorted = df_display.sort_values(by="IsFavorite", ascending=False)
     else:
         df_sorted = df_display
 
-    # 5. 转为字典列表传给页面
     contacts = df_sorted.to_dict(orient='records')
-
-    # 6. 把原始的索引 (Index) 放进去，确保删除/修改时 ID 是对的
     for i, contact in enumerate(contacts):
         contact['id'] = df_sorted.index[i]
-
-    # 传参给前端：contacts 数据，以及当前的 filter 状态（用于控制按钮显示）
     return render_template('index.html', contacts=contacts, current_filter=filter_type)
 
 
@@ -53,15 +41,11 @@ def add_contact():
 @app.route('/toggle_fav/<int:idx>')
 def toggle_fav(idx):
     global data
-    # 切换状态
     data.at[idx, "IsFavorite"] = not data.at[idx, "IsFavorite"]
-
-    # 核心修改：读取 URL 参数，决定跳回哪里
     filter_type = request.args.get('filter')
     if filter_type == 'fav':
         return redirect(url_for('index', filter='fav'))
-    else:
-        return redirect(url_for('index'))
+    return redirect(url_for('index'))
 
 
 @app.route('/delete/<int:idx>')
@@ -74,12 +58,57 @@ def delete_contact(idx):
 @app.route('/export')
 def export_excel():
     global data
-    # 创建内存中的 Excel 文件
+
+    export_list = []
+
+    for _, row in data.iterrows():
+        # 基础信息
+        row_dict = {
+            'Name': row['Name'],
+            'IsFavorite': "Yes" if row['IsFavorite'] else "No"  # 导出时变成 Yes/No 更好看
+        }
+
+        # 解析 ContactMethods (例如 "Mobile:123;Email:abc")
+        methods_str = str(row['ContactMethods']) if pd.notna(row['ContactMethods']) else ""
+        if methods_str:
+            parts = methods_str.split(';')
+            for part in parts:
+                if ':' in part:
+                    # 拆分类型和值
+                    m_type, m_val = part.split(':', 1)
+                    m_type = m_type.strip()  # 去除空格
+                    m_val = m_val.strip()
+
+                    # 如果这个人有两个手机号，用逗号拼接 (123, 456)
+                    if m_type in row_dict:
+                        row_dict[m_type] += f", {m_val}"
+                    else:
+                        row_dict[m_type] = m_val
+
+        export_list.append(row_dict)
+
+    # 2. 生成 DataFrame
+    if not export_list:
+        # 如果没数据，至少保证有表头
+        df_export = pd.DataFrame(columns=['Name', 'IsFavorite', 'Mobile', 'Email'])
+    else:
+        df_export = pd.DataFrame(export_list)
+
+    # 3. 整理列顺序：Name, IsFavorite 在前，其他列 (Mobile, Email...) 在后
+    cols = list(df_export.columns)
+    if 'Name' in cols: cols.remove('Name')
+    if 'IsFavorite' in cols: cols.remove('IsFavorite')
+    # 剩下的列按字母排序 (Email, Mobile, WeChat...)
+    final_cols = ['Name', 'IsFavorite'] + sorted(cols)
+    df_export = df_export[final_cols]
+
+    # 4. 导出
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        data.to_excel(writer, index=False)
+        df_export.to_excel(writer, index=False)
     output.seek(0)
-    return send_file(output, download_name="contacts.xlsx", as_attachment=True)
+
+    return send_file(output, download_name="contacts_separated.xlsx", as_attachment=True)
 
 
 @app.route('/import', methods=['POST'])
@@ -88,20 +117,45 @@ def import_excel():
     file = request.files['file']
     if file:
         try:
-            new_data = pd.read_excel(file)
-            # 数据清洗：处理一下 IsFavorite 列，防止格式报错
-            if "IsFavorite" not in new_data.columns:
-                new_data["IsFavorite"] = False
-            else:
-                # 兼容 Excel 里写 "Yes/No" 或 TRUE/FALSE 的情况
-                new_data["IsFavorite"] = new_data["IsFavorite"].apply(
-                    lambda x: True if str(x).lower() in ['true', 'yes', '1'] else False)
+            # 1. 读取 Excel
+            df_input = pd.read_excel(file)
 
-            data = pd.concat([data, new_data], ignore_index=True)
-            # --------------------
+            # 2. 准备转换回来的列表
+            new_rows = []
+
+            for _, row in df_input.iterrows():
+                name = row.get('Name', 'Unknown')
+
+                # 处理收藏状态
+                fav_raw = str(row.get('IsFavorite', 'No')).lower()
+                is_fav = True if fav_raw in ['yes', 'true', '1'] else False
+
+                # 处理联系方式：遍历所有不是 Name 和 IsFavorite 的列
+                methods_list = []
+                for col in df_input.columns:
+                    if col not in ['Name', 'IsFavorite']:
+                        val = row[col]
+                        # 如果这一格有值 (不是 NaN)
+                        if pd.notna(val) and str(val).strip() != "":
+                            methods_list.append(f"{col}:{val}")
+
+                # 拼成字符串 "Mobile:123;Email:abc"
+                methods_str = ";".join(methods_list)
+
+                new_rows.append({
+                    "Name": name,
+                    "ContactMethods": methods_str,
+                    "IsFavorite": is_fav
+                })
+
+            # 3. 创建新 DataFrame 并追加 (Append)
+            if new_rows:
+                new_data = pd.DataFrame(new_rows)
+                data = pd.concat([data, new_data], ignore_index=True)
 
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Import Error: {e}")
+
     return redirect(url_for('index'))
 
 
